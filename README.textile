@@ -1,0 +1,77 @@
+h2(#1). 1. Description
+
+This script can help you reduce your website loading times by minimizing the size of your website static resources.
+
+It can minify CSS files (using "YUI compressor":http://developer.yahoo.com/yui/compressor/), compile JavaScript files (using "Google Closure Compiler":http://code.google.com/closure/compiler/) and compress images (using "jpegoptim":http://freshmeat.net/projects/jpegoptim/ and "optipng":http://optipng.sourceforge.net).
+
+Not only it can compile external JavaScript files, but it can also find and automatically compile blocks of JavaScript code located in your templates / html files.
+
+It would ideally be used some where in your website deployment process.
+
+If you happen to develop web applications using "Django":http://www.djangoproject.com/ and you currently don't use a deployment script, check "django-deployment-script":http://github.com/Kami/django-deployment-script.
+
+h2(#2). 2. Requirements
+
+* Java (http://www.java.com/en/download/manual.jsp)
+* YUI Compressor (http://developer.yahoo.com/yui/compressor/)
+* Google Closure Compiler (http://code.google.com/closure/compiler/)
+* jpegoptim (http://freshmeat.net/projects/jpegoptim/)
+* optipng (http://optipng.sourceforge.net/)
+
+h2(#3). 3. Usage
+
+# Set the path to the external tools / binaries in the asset_deflator.py file
+# Run the script
+
+@python asset_deflator.py --path=/path/to/your/assets/ --all -v -s@
+
+This will run the script in verbose mode (-v) and a short report will be displayed (-s) at the end.
+
+--all option means that the script will search for css files, javascript files, files with inline javascript and images and try to minify / compile / compress them.
+
+If you don't want to run all the actions, skip the --all argument and for example use --minify-css (this will cause the script to only look for CSS files in the provided path and try to minify them).
+
+By default, the script will create new files with .min suffix after the file name and not overwrite the original files (you can change this behavior with -o option).
+
+For the description of all the arguments, run the script with the --help option.
+
+@python asset_deflator.py --help@
+
+If everything goes well, you should see something like this:
+
+bq.. Performed work on 143 files located in /home/user/somewhere
+Total running time: 0:00:56
+
+CSS files:
+Size before: 13237 bytes, size after: 10066 bytes -23.96%
+
+JavaScript files:
+Size before: 50386 bytes, size after: 23982 bytes -52.40%
+
+JavaScript inline:
+Size before: 13237 bytes, size after: 10066 bytes -23.96%
+
+Image files:
+Size before: 3941782 bytes, size after: 3146148 bytes -20.18%
+
+h2(#4). 4. Frequently asked questions
+
+*Which image formats are currently supported?*
+
+png, jpg and gif (basically all you need, unless you are a guy who is still including 2MB large bmp files on their homepage :P)
+
+*How does this script find blocks of JavaScript code inside my templates?*
+
+Well, the regular expression which matches the inline JavaScript in this version isn't exactly a rocket science, but it will probably work for 90% of the cases.
+
+h2(#5). 5. Notes
+
+This script has been tested and confirmed to work with YUI compressor 2.4.2 and Google Closure Compiler 20091217.
+
+h2(#6). 6. Upcoming features
+
+Packing multiple CSS and JavaScript files together into one file and replacing the references to this files in your templates with the reference to a new file.
+
+h2(#7). 7. Changelog
+
+* 1.0.0 (17.01.2010) - First release
