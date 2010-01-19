@@ -39,8 +39,10 @@ For the description of all the arguments, run the script with the --help option.
 
 If everything goes well, you should see something like this:
 
-bq.. Performed work on 143 files located in /home/user/somewhere
-Total running time: 0:00:56
+bq.. Statistics
+
+Performed work on 170 files located in /usr/home/some/where
+Running time: 0:01:04
 
 CSS files:
 Size before: 13237 bytes, size after: 10066 bytes -23.96%
@@ -48,11 +50,14 @@ Size before: 13237 bytes, size after: 10066 bytes -23.96%
 JavaScript files:
 Size before: 50386 bytes, size after: 23982 bytes -52.40%
 
-JavaScript inline:
-Size before: 13237 bytes, size after: 10066 bytes -23.96%
+Templates:
+Size before: 14926 bytes, Size after: 13269 bytes -11.10%
 
 Image files:
 Size before: 3941782 bytes, size after: 3146148 bytes -20.18%
+
+Total:
+Size before: 4020331 bytes, size after: 3193465 bytes -20.57%
 
 h2(#4). 4. Frequently asked questions
 
@@ -73,5 +78,12 @@ h2(#6). 6. Upcoming features
 Packing multiple CSS and JavaScript files together into one file and replacing the references to this files in your templates with the reference to a new file.
 
 h2(#7). 7. Changelog
+
+* 1.1.0 (19.01.2010):
+
+- Added support for minification of inline (internal) CSS styles (--minify-inline-css)
+- Only one instance of program is allowed to run at once
+- Tweaked regular expressions for matching CSS and JavaScript blocks
+- Size of all assets before and after compression process is displayed if using --statistics option
 
 * 1.0.0 (17.01.2010) - First release

@@ -3,7 +3,7 @@
 # Name: Asset Deflator
 # Description: Script for minifying / compiling / compressing your website static resources.
 # Author: Tomaž Muraus (http://www.tomaz-muraus.info)
-# Version: 1.0.0
+# Version: 1.1.0
 # License: GPL
 
 # Requirements:
@@ -15,10 +15,12 @@
 # - jpegoptim (http://freshmeat.net/projects/jpegoptim/)
 # - optipng (http://optipng.sourceforge.net/)
 
-__version__ = '1.0.0'
+__version__ = '1.1.0'
 
 import os
 import re
+import sys
+import fcntl
 import logging
 import optparse
 import time
@@ -37,37 +39,52 @@ JPEGOPTIM_PATH = '/usr/local/bin/jpegoptim'
 OPTIPNG_PATH = '/usr/local/bin/optipng'
 
 class AssetDeflator():
-    javascript_re = re.compile('<script type="text/javascript">(.*?)</script>', re.DOTALL | re.IGNORECASE)
+    javascript_re = re.compile(r'<script\s*(?:type=["\']?text/javascript["\']?)?>(.*?)</script>', re.DOTALL | re.IGNORECASE)
+    css_re = re.compile(r'<style\s*(?:type=["\']?text/css["\']?)?>(.*?)</style>', re.DOTALL | re.IGNORECASE)
     file_name_suffix = '.min'
     
-    def __init__(self, assets_path, actions, overwrite_original, print_statistics):
+    event = threading.Event()
+    lock = threading.Lock()
+    inline_running = False
+    inline_run_count = 0
+    
+    def __init__(self, assets_path, actions, overwrite_original, print_statistics, lock_file = '/tmp/asset_deflator.lock'):
         self.assets_path = assets_path
         self.actions = actions
         self.overwrite_original = overwrite_original
         self.print_statistics = print_statistics
+        self.lock_file = lock_file
         
         self.files_count = 0
-        self.size_before = {'css': 0, 'js': 0, 'inline_js': 0, 'img': 0}
-        self.size_after = {'css': 0, 'js': 0, 'inline_js': 0, 'img': 0}
+        self.size_before = {'css': 0, 'js': 0, 'tpl': 0, 'img': 0}
+        self.size_after = {'css': 0, 'js': 0, 'tpl': 0, 'img': 0}
         
         self.__create_temporary_directories()
         
     def start(self):
         """ Start the minification / compilation / compression process. """
+        
+        # Only allow one instance to run at once
+        try:
+            self.__lock()
+        except IOError:
+            print 'Another instance of Asset Deflator is already running - exiting.'
+            sys.exit(1)
 
         self.start_time = time.time()
-        
         workers = []
-        for key, value in actions.iteritems():
-            if key == 'min_css':
+        for key, value in self.actions.iteritems():
+            if key == 'minify_css':
                 workers.append(threading.Thread(target = self.minify_css, args = (self.__find_valid_files(self.assets_path, ['css']), )))
+            elif key == 'minify_inline_css':
+                workers.append(threading.Thread(target = self.compress_inline_code, args = ('css', self.__find_files_with_inline_code(self.css_re, self.__find_valid_files(self.assets_path, ['htm', 'html', 'tpl', 'php', 'asp'])), )))
             elif key == 'compile_js':
                 workers.append(threading.Thread(target = self.compile_javascript, args = (self.__find_valid_files(self.assets_path, ['js']), )))
             elif key == 'compile_inline_js':
-                workers.append(threading.Thread(target = self.compile_inline_javascript, args = (self.__find_files_with_inline_javascript(self.__find_valid_files(self.assets_path, ['htm', 'html', 'tpl', 'php', 'asp'])), )))
+                workers.append(threading.Thread(target = self.compress_inline_code, args = ('js', self.__find_files_with_inline_code(self.javascript_re, self.__find_valid_files(self.assets_path, ['htm', 'html', 'tpl', 'php', 'asp'])), )))
             elif key == 'compress_imgs':
                 workers.append(threading.Thread(target = self.compress_images, args = (self.__find_valid_files(self.assets_path, ['jpg', 'jpeg', 'png', 'gif']), )))
-        
+
         for worker in workers:
             worker.start()
         
@@ -136,83 +153,113 @@ class AssetDeflator():
         
         logging.info('JavaScript compilation: completed')
         
-    def compile_inline_javascript(self, files):
-        """ Compile inline JavaScript with Google Closure Compiler. """
+    def compress_inline_code(self, type, files):
+        """ Compress inline CSS or JavaScript code. """
         
-        if not files:
+        if not files or type not in ['css', 'js']:
             return
+        
+        # If both compress actions are selected (inline CSS minification and JavaScript compilation), we need to wait for the first
+        # one to finish, because they could both work on the same files.
+        if 'minify_inline_css' in self.actions and 'compile_inline_js' in self.actions:
+            self.lock.acquire()
+            if self.inline_running == True:
+                self.lock.release()
+                self.event.wait()
+            else:
+                self.lock.release()
+                
+            self.lock.acquire()
+            self.inline_running = True
+            self.lock.release()
+            
+            # If users has selected not to overwrite the original files and this is a second run, we must use already compressed files
+            if not self.overwrite_original and self.inline_run_count == 1:
+                files = map(self.__get_file_name_with_suffix, files)
 
-        logging.info('Inline JavaScript compilation: start')
-        self.size_before['inline_js'] = self.__calculate_files_size(files)
+        logging.info('Inline %(type)s compression: start' % {'type': 'CSS' if type == 'css' else 'JavaScript'})
+        self.size_before['tpl'] = self.__calculate_files_size(files)
         self.files_count += len(files)
         
-        # Copy the files to a temporary directory
+        # Copy the template files to a temporary directory
         original_file_locations = []
         for index, file in enumerate(files):
             # Index is prepended to the file name, because files can be located in different directories and have the same name
-            shutil.copy(file, os.path.join(self.temporaryDirectories['js_files'], str(index) + '.' + os.path.basename(file)))
+            shutil.copy(file, os.path.join(self.temporaryDirectories[type + '_files'], str(index) + '.' + os.path.basename(file)))
             original_file_locations.append(os.path.dirname(file))
         
-        # Find inline JavaScript, extract it and write it to a temporary file
-        javascript_files = {}
-        for file in os.listdir(self.temporaryDirectories['js_files']):
-            with open(os.path.join(self.temporaryDirectories['js_files'], file), 'r') as f:
+        # Find inline code, extract it and write it to a temporary file
+        matching_files = {}
+        for file in os.listdir(self.temporaryDirectories[type + '_files']):
+            with open(os.path.join(self.temporaryDirectories[type + '_files'], file), 'r') as f:
                 content = f.read()
-                matches = self.javascript_re.findall(content)
+                matches = self.css_re.findall(content) if type == 'css' else self.javascript_re.findall(content)
                 
                 if len(matches) > 0:
-                    javascript_files[file] = []
+                    matching_files[file] = []
                         
                 for match in matches:
                     tmp_file = tempfile.NamedTemporaryFile(delete = False)
                     tmp_file.write(match)
                     tmp_file.close()
 
-                    javascript_files[file].append(tmp_file.name)
+                    matching_files[file].append(tmp_file.name)
                     self.temporaryFiles.append(tmp_file.name)
         
-        # Compile temporary files with JavaScript code and save the compiled code to a temporary file  named <tem_pname>.min.extension
-        for key, temp_files in javascript_files.iteritems():
+        # Compress the temporary and save the compressed code to a temporary file named <temp_name>.min.extension
+        for key, temp_files in matching_files.iteritems():
             for file in temp_files:
-                output = subprocess.Popen('%(java_path)s -jar %(closure_compiler_path)s --compilation_level SIMPLE_OPTIMIZATIONS --warning_level QUIET --js "%(input_file)s"' % {'java_path': JAVA_PATH, 'closure_compiler_path': CLOSURE_COMPILER_PATH, 'input_file': file}, shell = True, stdout = subprocess.PIPE, close_fds = True).communicate()[0]
+                if type == 'css':
+                    output = subprocess.Popen('%(java_path)s -jar %(yui_compressor_path)s --type css "%(input_file)s"' % {'java_path': JAVA_PATH, 'yui_compressor_path': YUI_COMPRESSOR_PATH, 'input_file': file}, shell = True, stdout = subprocess.PIPE, close_fds = True).communicate()[0]
+                elif type == 'js':
+                    output = subprocess.Popen('%(java_path)s -jar %(closure_compiler_path)s --compilation_level SIMPLE_OPTIMIZATIONS --warning_level QUIET --js "%(input_file)s"' % {'java_path': JAVA_PATH, 'closure_compiler_path': CLOSURE_COMPILER_PATH, 'input_file': file}, shell = True, stdout = subprocess.PIPE, close_fds = True).communicate()[0]
              
-                with open(file + self.file_name_suffix, 'w+') as js_f:
-                    js_f.write(output)
+                with open(file + self.file_name_suffix, 'w+') as f:
+                    f.write(output)
                       
-        # Open the files with blocks of inline JavaScript code and replace the non compiled JavaScript with compiled one
-        for index, file in enumerate(os.listdir(self.temporaryDirectories['js_files'])):
+        # Open the template files with blocks of inline code and replace the non-compressed code with the compressed one
+        for index, file in enumerate(os.listdir(self.temporaryDirectories[type + '_files'])):
             
-            file_path = os.path.join(self.temporaryDirectories['js_files'], file)
-            with open(file_path, 'r+') as f:
-                content = f.read()
+            file_path = os.path.join(self.temporaryDirectories[type + '_files'], file)
+            with open(file_path, 'r+') as f_tpl:
+                content = f_tpl.read()
                 
-                for javascript_file in javascript_files[file]:
-                    with open(javascript_file, 'r') as js_f:
-                        original_javascript = js_f.read()
+                for matching_file in matching_files[file]:
+                    with open(matching_file, 'r') as f:
+                        original_code = f.read()
                         
-                    with open(javascript_file + self.file_name_suffix, 'r') as js_f:
-                        optimized_javascript = js_f.read()
+                    with open(matching_file + self.file_name_suffix, 'r') as f:
+                        compressed_code = f.read()
                         
-                    content = re.sub('%(original_javascript)s' % {'original_javascript': re.escape(original_javascript)}, optimized_javascript, content, 1)
+                    content = re.sub('%(original_code)s' % {'original_code': re.escape(original_code)}, compressed_code, content, 1)
                     
-                f.truncate(0)        
-                f.seek(0)
-                f.write(content)
+                f_tpl.truncate(0)        
+                f_tpl.seek(0)
+                f_tpl.write(content)
                 
             # Remove index from the file name, (optionally) add a suffix and move file back to the original location
             file_path = self.__remove_index_from_file_name(file_path)
             
-            if not self.overwrite_original:
+            if not self.overwrite_original and self.inline_run_count == 0:
                 file_path = self.__add_suffix_after_file_name(file_path)
                 
             self.__move_file(file_path, original_file_locations[index])
  
         if self.overwrite_original:
-            self.size_after['inline_js'] = self.__calculate_files_size(files)
+            self.size_after['tpl'] = self.__calculate_files_size(files)
         else:
-            self.size_after['inline_js'] = self.__calculate_files_size(map(self.__get_file_name_with_suffix, files))
-            
-        logging.info('Inline JavaScript compilation: completed')
+            self.size_after['tpl'] = self.__calculate_files_size(map(self.__get_file_name_with_suffix, files))
+        
+        if 'minify_inline_css' in self.actions and 'compile_inline_js' in self.actions:  
+            # Signal the waiting thread that we are done  
+            self.lock.acquire()
+            self.inline_running = False
+            self.inline_run_count = 1
+            self.event.set()
+            self.event.clear()
+            self.lock.release()
+
+        logging.info('Inline %(type)s compression: completed' % {'type': 'CSS' if type == 'css' else 'JavaScript'})
         
     def compress_images(self, image_files):
         """ Compress images using jpegoptim / optipng tool. """
@@ -261,19 +308,19 @@ class AssetDeflator():
         
         return reduce(operator.add, map(lambda file: os.path.getsize(file) if os.path.exists(file) else 0, files))
         
-    def __find_files_with_inline_javascript(self, files):
-        """ Return a list of files which contain blocks of JavaScript code """
+    def __find_files_with_inline_code(self, regular_expression, files):
+        """ Return a list of files which contain text matching the provided regular expression. """
         
-        valid_files = []
+        matching_files = []
         for file in files:
             with open(file, 'r') as f:
                 content = f.read()
-                matches = self.javascript_re.findall(content)
+                matches = regular_expression.findall(content)
                 
                 if len(matches) > 0:
-                    valid_files.append(file)
+                    matching_files.append(file)
                     
-        return valid_files
+        return matching_files
     
     def __find_valid_files(self, path, valid_extensions):
         """ Return a list of files with a valid extension. """
@@ -338,6 +385,7 @@ class AssetDeflator():
         self.temporaryDirectories = {}
         self.temporaryFiles = []
         
+        self.temporaryDirectories['css_files'] = tempfile.mkdtemp()
         self.temporaryDirectories['js_files'] = tempfile.mkdtemp()
         self.temporaryDirectories['jpg_files'] = tempfile.mkdtemp()
         self.temporaryDirectories['png_files'] = tempfile.mkdtemp()
@@ -352,6 +400,10 @@ class AssetDeflator():
         for file in self.temporaryFiles:
             if os.path.exists(file):
                 os.remove(file)
+                
+    def __lock(self):
+        self.lockfp = open(self.lock_file, 'w')
+        fcntl.lockf(self.lockfp, fcntl.LOCK_EX | fcntl.LOCK_NB)
     
     def print_stats(self):
         print 'Statistics'
@@ -364,7 +416,7 @@ class AssetDeflator():
             
         print 'Running time: %(running_time)s' % {'running_time': str(datetime.timedelta(seconds = int(self.end_time - self.start_time)))}
         
-        if 'min_css' in self.actions and self.size_before['css'] > 0:
+        if 'minify_css' in self.actions and self.size_before['css'] > 0:
             print ''
             print 'CSS files:'
             print 'Size before: %(size_before)d bytes, size after: %(size_after)d bytes %(difference)+.2f%%' % {'size_before': self.size_before['css'], 'size_after': self.size_after['css'], 'difference': operator.neg((100 - ((float(self.size_after['css']) / self.size_before['css']) * 100)))}
@@ -374,27 +426,33 @@ class AssetDeflator():
             print 'JavaScript files:'
             print 'Size before: %(size_before)d bytes, size after: %(size_after)d bytes %(difference)+.2f%%' % {'size_before': self.size_before['js'], 'size_after': self.size_after['js'], 'difference': operator.neg((100 - (float(self.size_after['js']) / self.size_before['js'] * 100)))}
             
-        if 'compile_inline_js' in self.actions  and self.size_before['inline_js'] > 0:
+        if ('compile_inline_js' in self.actions or 'minify_inline_css' in self.actions) and self.size_before['tpl'] > 0:
             print ''
-            print 'JavaScript inline:'
-            print 'Size before: %(size_before)d bytes, Size after: %(size_after)d bytes %(difference)+.2f%%' % {'size_before': self.size_before['inline_js'], 'size_after': self.size_after['inline_js'], 'difference': operator.neg((100 - (float(self.size_after['inline_js']) / self.size_before['inline_js'] * 100)))}
+            print 'Templates:'
+            print 'Size before: %(size_before)d bytes, Size after: %(size_after)d bytes %(difference)+.2f%%' % {'size_before': self.size_before['tpl'], 'size_after': self.size_after['tpl'], 'difference': operator.neg((100 - (float(self.size_after['tpl']) / self.size_before['tpl'] * 100)))}
             
-        if 'compress_imgs' in self.actions  and self.size_before['img'] > 0:
+        if 'compress_imgs' in self.actions and self.size_before['img'] > 0:
             print ''
             print 'Image files:'
             print 'Size before: %(size_before)d bytes, size after: %(size_after)d bytes %(difference)+.2f%%' % {'size_before': self.size_before['img'], 'size_after': self.size_after['img'], 'difference': operator.neg((100 - (float(self.size_after['img']) / self.size_before['img'] * 100)))}
-    
-if __name__ == '__main__':
+
+        if self.files_count > 0:
+            print ''
+            print 'Total:'
+            print 'Size before: %(size_before)d bytes, size after: %(size_after)d bytes %(difference)+.2f%%' % {'size_before': reduce(operator.add, self.size_before.values()), 'size_after': reduce(operator.add, self.size_after.values()), 'difference': operator.neg((100 - (float(reduce(operator.add, self.size_after.values())) / reduce(operator.add, self.size_before.values()) * 100)))}
+  
+if __name__ == '__main__':    
     parser = optparse.OptionParser(version = '%prog ' + __version__)
     parser.add_option('-v', '--verbose', action = 'store_true', default = False, dest = 'verbose', help = 'print what is going on [default: %default]')
     parser.add_option('-o', '--overwrite', action = 'store_true', default = False, dest = 'overwrite_original', help = 'overwrite the original files (don\'t create new files with .min extension) [default: %default]')
     parser.add_option('-s', '--statistics', action = 'store_true', default = False, dest = 'print_statistics', help = 'print statistics at the end')
-    parser.add_option('--path', action = 'store', type = 'string', dest = 'assets_path', metavar = 'PATH', help = 'path to your asset files')
-    parser.add_option('--all', action = 'store_true', default = False, dest = 'run_all', help = 'run all actions')
     
-    parser.add_option('--minify-css', action = 'store_true', default = False, dest = 'action_min_css', help = 'minify the CSS files')
+    parser.add_option('--path', action = 'store', type = 'string', dest = 'assets_path', metavar = 'PATH', help = 'path to your asset files')
+    parser.add_option('--all', action = 'store_true', default = False, dest = 'run_all', help = 'run all actions') 
+    parser.add_option('--minify-css', action = 'store_true', default = False, dest = 'action_minify_css', help = 'minify the CSS files')
+    parser.add_option('--minify-inline-css', action = 'store_true', default = False, dest = 'action_minify_inline_css', help = 'find and minify blocks of CSS in your templates')
     parser.add_option('--compile-js', action = 'store_true', default = False, dest = 'action_compile_js', help = 'compile JavaScript files using Google Closure Compiler')
-    parser.add_option('--compile-inline-js', action = 'store_true', default = False, dest = 'action_compile_inline_js', help = 'find and compile inline blocks of JavaScript code using Google Closure Compiler')
+    parser.add_option('--compile-inline-js', action = 'store_true', default = False, dest = 'action_compile_inline_js', help = 'find and compile blocks of JavaScript in your templates using Google Closure Compiler')
     parser.add_option('--compress-images', action = 'store_true', default = False, dest = 'action_compress_imgs', help = 'compress image files')
     
     (options, args) = parser.parse_args()
