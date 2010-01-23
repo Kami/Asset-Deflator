@@ -4,7 +4,7 @@ This script can help you reduce your website loading times by minimizing the siz
 
 It can minify CSS files (using "YUI compressor":http://developer.yahoo.com/yui/compressor/), compile JavaScript files (using "Google Closure Compiler":http://code.google.com/closure/compiler/) and compress images (using "jpegoptim":http://freshmeat.net/projects/jpegoptim/ and "optipng":http://optipng.sourceforge.net).
 
-Not only it can compile external JavaScript files, but it can also find and automatically compile blocks of JavaScript code located in your templates / html files.
+Not only it can compile external JavaScript files, but it can also find and automatically compile blocks of inline JavaScript and internal CSS code located in your templates / html files.
 
 It would ideally be used some where in your website deployment process.
 
@@ -25,9 +25,9 @@ h2(#3). 3. Usage
 
 @python asset_deflator.py --path=/path/to/your/assets/ --all -v -s@
 
-This will run the script in verbose mode (-v) and a short report will be displayed (-s) at the end.
+This will run the script in the verbose mode (-v) and a short report will be displayed (-s) at the end.
 
---all option means that the script will search for css files, javascript files, files with inline javascript and images and try to minify / compile / compress them.
+--all option means that the script will search for css files, javascript files, files with inline javascript and/or internal css and images and try to minify / compile / compress them.
 
 If you don't want to run all the actions, skip the --all argument and for example use --minify-css (this will cause the script to only look for CSS files in the provided path and try to minify them).
 
@@ -78,6 +78,10 @@ h2(#6). 6. Upcoming features
 Packing multiple CSS and JavaScript files together into one file and replacing the references to this files in your templates with the reference to a new file.
 
 h2(#7). 7. Changelog
+
+* 1.1.1 (23.01.2010):
+
+- Now multiple instances can run at once, but only if they are working on different paths (--path option)
 
 * 1.1.0 (19.01.2010):
 

@@ -3,7 +3,7 @@
 # Name: Asset Deflator
 # Description: Script for minifying / compiling / compressing your website static resources.
 # Author: Tomaž Muraus (http://www.tomaz-muraus.info)
-# Version: 1.1.0
+# Version: 1.1.1
 # License: GPL
 
 # Requirements:
@@ -15,12 +15,14 @@
 # - jpegoptim (http://freshmeat.net/projects/jpegoptim/)
 # - optipng (http://optipng.sourceforge.net/)
 
-__version__ = '1.1.0'
+__version__ = '1.1.1'
 
 import os
 import re
 import sys
 import fcntl
+import hashlib
+import atexit
 import logging
 import optparse
 import time
@@ -53,23 +55,27 @@ class AssetDeflator():
         self.actions = actions
         self.overwrite_original = overwrite_original
         self.print_statistics = print_statistics
-        self.lock_file = lock_file
         
+        (file_name, file_extension) = os.path.splitext(lock_file)
+        self.lock_file = file_name + '.'  + hashlib.md5(self.assets_path).hexdigest() + file_extension
+
         self.files_count = 0
         self.size_before = {'css': 0, 'js': 0, 'tpl': 0, 'img': 0}
         self.size_after = {'css': 0, 'js': 0, 'tpl': 0, 'img': 0}
         
-        self.__create_temporary_directories()
-        
     def start(self):
         """ Start the minification / compilation / compression process. """
         
-        # Only allow one instance to run at once
+        # Only one instance can work on the same path at once
         try:
             self.__lock()
         except IOError:
             print 'Another instance of Asset Deflator is already running - exiting.'
             sys.exit(1)
+        
+        self.__create_temporary_directories()
+        atexit.register(self.__delete_lock_file)
+        atexit.register(self.__cleanup_tempporary_files)
 
         self.start_time = time.time()
         workers = []
@@ -97,9 +103,6 @@ class AssetDeflator():
         
         if self.print_statistics:
             self.print_stats()
-        
-        # Clean up the temporary directories and files created during the compilation process       
-        self.__cleanup_tempporary_files()
         
     def minify_css(self, css_files):
         """ Minify CSS files. """
@@ -402,8 +405,16 @@ class AssetDeflator():
                 os.remove(file)
                 
     def __lock(self):
+        """ Create a lock file. """
+
         self.lockfp = open(self.lock_file, 'w')
         fcntl.lockf(self.lockfp, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        
+    def __delete_lock_file(self):
+        """ Delete a lock file. """
+        
+        if os.path.exists(self.lock_file):
+            os.unlink(self.lock_file)
     
     def print_stats(self):
         print 'Statistics'
