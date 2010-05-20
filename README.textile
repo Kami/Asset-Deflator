@@ -79,6 +79,10 @@ Packing multiple CSS and JavaScript files together into one file and replacing t
 
 h2(#7). 7. Changelog
 
+* 1.2.0 (20.05.2010):
+
+- Option to save a list of the files which were compressed during this run (*--save-state=STATE_FILE*) to a file and load this file on subsequent run (*--skip-not-modified=STATE_FILE*) and skip the files which were not modified
+
 * 1.1.1 (23.01.2010):
 
 - Now multiple instances can run at once, but only if they are working on different paths (--path option)
@@ -90,4 +94,6 @@ h2(#7). 7. Changelog
 - Tweaked regular expressions for matching CSS and JavaScript blocks
 - Size of all assets before and after compression process is displayed if using --statistics option
 
-* 1.0.0 (17.01.2010) - First release
+* 1.0.0 (17.01.2010):
+
+- Initial release
