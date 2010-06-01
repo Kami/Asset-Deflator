@@ -18,7 +18,7 @@ h2(#2). 2. Requirements
 * jpegoptim (http://freshmeat.net/projects/jpegoptim/)
 * optipng (http://optipng.sourceforge.net/)
 
-h2(#3). 3. Usage
+h2(#3). 3. Basic usage and setup
 
 # Set the path to the external tools / binaries in the asset_deflator.py file
 # Run the script
@@ -59,7 +59,29 @@ Size before: 3941782 bytes, size after: 3146148 bytes -20.18%
 Total:
 Size before: 4020331 bytes, size after: 3193465 bytes -20.57%
 
-h2(#4). 4. Frequently asked questions
+h2(#4). 4. Using the "save state" option
+
+If you plan to use this tool multiple times on the same path, you should consider using the "save state" option.
+
+This allows program to save the current state to a file and the next time you run it and provide it with the path to the state file, only the new files and the ones which have been modified will be acted upon (there is no point in compressing the file which has already been compressed and hasn't changed).
+
+The save state option can be used like this:
+
+@python asset_deflator.py --path=/path/to/your/assets/ --save-state=/path/to/state.file --all -v -o -s@
+
+This will run all the actions (--all) on the files located in /path/to/your/assets/ and at the end, save the current state (file names and modification times) to a file located at /path/to/state.file.
+
+On the next run, you would provide the program with the path to the previously saved state file:
+
+@python asset_deflator.py --path=/path/to/your/assets/ --skip-not-modified=/path/to/state.file --save-state=/path/to/state.file --all -v -o -s@
+
+This time, we provided the --skip-not-modified option, meaning that only the new files and the ones which have been modified since the last run will be acted upon.
+
+Note that we also provided the --save-state option with the path to the same state file, which means that the state will again be saved to this file (it will be updated) at the end of the run.
+
+*If you plan to periodically run this tool on the same path, you should always provide the program with both options (--skip-not-modified and --save-state) pointing to the same file, which allows it to always reuse and update the same state file and only act on the new and modified files.*
+
+h2(#5). 5. Frequently asked questions
 
 *Which image formats are currently supported?*
 
@@ -69,15 +91,21 @@ png, jpg and gif (basically all you need, unless you are a guy who is still incl
 
 Well, the regular expression which matches the inline JavaScript in this version isn't exactly a rocket science, but it will probably work for 90% of the cases.
 
-h2(#5). 5. Notes
+*How does the program know if the file has been modified?*
+
+When using the "save state" option, the program saves the file names and modification times to a file.
+
+If the current file modification time is different from the on saved in the state file, the file is considered modified and all the actions you have specified will be performed on this file.
+
+h2(#6). 6. Notes
 
 This script has been tested and confirmed to work with YUI compressor 2.4.2 and Google Closure Compiler 20091217.
 
-h2(#6). 6. Upcoming features
+h2(#7). 7. Upcoming features
 
 Packing multiple CSS and JavaScript files together into one file and replacing the references to this files in your templates with the reference to a new file.
 
-h2(#7). 7. Changelog
+h2(#8). 8. Changelog
 
 * 1.2.0 (20.05.2010):
 
